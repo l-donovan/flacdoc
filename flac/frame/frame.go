@@ -2,7 +2,6 @@ package frame
 
 import (
 	"encoding/binary"
-	"errors"
 	"fmt"
 	"io"
 
@@ -37,7 +36,7 @@ func NewScanner(src io.ReadSeeker, streaminfo metadata.StreamInfo) Scanner {
 }
 
 func (f *Scanner) readCodedNumber() (int, error) {
-	n, err := f.ReadBuf(1)
+	n, err := f.readBuf(1)
 
 	if err != nil {
 		return 0, err
@@ -46,7 +45,7 @@ func (f *Scanner) readCodedNumber() (int, error) {
 	if (n[0] >> 7) == 0b0 {
 		return int(n[0]), nil
 	} else if (n[0] >> 5) == 0b110 {
-		next, err := f.ReadBuf(1)
+		next, err := f.readBuf(1)
 
 		if err != nil {
 			return 0, err
@@ -55,7 +54,7 @@ func (f *Scanner) readCodedNumber() (int, error) {
 		n = append(n, next...)
 		return ((int(n[0]) & 0b00011111) << 6) | (int(n[1]) & 0b00111111), nil
 	} else if (n[0] >> 4) == 0b1110 {
-		next, err := f.ReadBuf(2)
+		next, err := f.readBuf(2)
 
 		if err != nil {
 			return 0, err
@@ -64,7 +63,7 @@ func (f *Scanner) readCodedNumber() (int, error) {
 		n = append(n, next...)
 		return ((int(n[0]) & 0b00001111) << 12) | ((int(n[1]) & 0b00111111) << 6) | (int(n[2]) & 0b00111111), nil
 	} else if (n[0] >> 3) == 0b11110 {
-		next, err := f.ReadBuf(3)
+		next, err := f.readBuf(3)
 
 		if err != nil {
 			return 0, err
@@ -73,7 +72,7 @@ func (f *Scanner) readCodedNumber() (int, error) {
 		n = append(n, next...)
 		// TODO
 	} else if (n[0] >> 2) == 0b111110 {
-		next, err := f.ReadBuf(4)
+		next, err := f.readBuf(4)
 
 		if err != nil {
 			return 0, err
@@ -82,7 +81,7 @@ func (f *Scanner) readCodedNumber() (int, error) {
 		n = append(n, next...)
 		// TODO
 	} else if (n[0] >> 1) == 0b1111110 {
-		next, err := f.ReadBuf(5)
+		next, err := f.readBuf(5)
 
 		if err != nil {
 			return 0, err
@@ -91,7 +90,7 @@ func (f *Scanner) readCodedNumber() (int, error) {
 		n = append(n, next...)
 		// TODO
 	} else if n[0] == 0b11111110 {
-		next, err := f.ReadBuf(6)
+		next, err := f.readBuf(6)
 
 		if err != nil {
 			return 0, err
@@ -112,7 +111,7 @@ func (f *Scanner) readBlockSize(bits uint8) (uint16, error) {
 	} else if bits >= 0b0010 && bits < 0b0110 {
 		return 144 * (1 << bits), nil
 	} else if bits == 0b0110 {
-		next, err := f.ReadBuf(1)
+		next, err := f.readBuf(1)
 
 		if err != nil {
 			return 0, err
@@ -120,7 +119,7 @@ func (f *Scanner) readBlockSize(bits uint8) (uint16, error) {
 
 		return uint16(next[0]) + 1, nil
 	} else if bits == 0b0111 {
-		next, err := f.ReadBuf(2)
+		next, err := f.readBuf(2)
 
 		if err != nil {
 			return 0, err
@@ -159,7 +158,7 @@ func (f *Scanner) readSampleRate(bits uint8) (uint32, error) {
 	case 0b1011:
 		return 96000, nil
 	case 0b1100:
-		next, err := f.ReadBuf(1)
+		next, err := f.readBuf(1)
 
 		if err != nil {
 			return 0, err
@@ -167,7 +166,7 @@ func (f *Scanner) readSampleRate(bits uint8) (uint32, error) {
 
 		return 1000 * uint32(next[0]), nil
 	case 0b1101:
-		next, err := f.ReadBuf(2)
+		next, err := f.readBuf(2)
 
 		if err != nil {
 			return 0, err
@@ -175,7 +174,7 @@ func (f *Scanner) readSampleRate(bits uint8) (uint32, error) {
 
 		return uint32(binary.BigEndian.Uint16(next)), nil
 	case 0b1110:
-		next, err := f.ReadBuf(2)
+		next, err := f.readBuf(2)
 
 		if err != nil {
 			return 0, err
@@ -238,15 +237,13 @@ func (f *Scanner) readBitDepth(bits uint8) (uint8, error) {
 }
 
 func (f *Scanner) rotateBufLeft() {
-	for i := range 14 {
-		f.buf[i] = f.buf[i+1]
-	}
+	copy(f.buf, f.buf[1:])
 
 	f.readIdx--
 	f.writeIdx--
 }
 
-func (f *Scanner) ReadBuf(n int) ([]byte, error) {
+func (f *Scanner) readBuf(n int) ([]byte, error) {
 	available := f.writeIdx - f.readIdx
 
 	if n > available {
@@ -268,54 +265,30 @@ func (f *Scanner) ReadBuf(n int) ([]byte, error) {
 	return out, nil
 }
 
-func (f *Scanner) Init() error {
-	frameHeaderBytes, err := f.ReadBuf(2)
-
-	if err != nil {
-		return err
-	}
-
-	frameHeader := binary.BigEndian.Uint16(frameHeaderBytes)
-
-	if (frameHeader & 0xfffe) != 0xfff8 {
-		return errors.New("invalid frame header")
-	}
-
-	frameBlockingStrategy := uint8(frameHeader & 0b1)
-
-	if _, err := f.src.Seek(-2, io.SeekCurrent); err != nil {
-		return err
-	}
-
-	f.blockingStrategy = new(frameBlockingStrategy)
-
-	return nil
-}
-
-func (f *Scanner) ReadFrameHeader() error {
+func (f *Scanner) readFrameHeader() error {
 	var location string
-	frameHeaderBytes, err := f.ReadBuf(2)
+	frameHeaderBytes, err := f.readBuf(2)
 
 	if err != nil {
-		return fmt.Errorf("error on line 371: %w", err)
+		return err
 	}
 
 	frameHeader := binary.BigEndian.Uint16(frameHeaderBytes)
 
 	if (frameHeader & 0xfffe) != 0xfff8 {
-		return errors.New("invalid frame header")
+		return errorInvalidFrameHeader
 	}
 
 	frameBlockingStrategy := uint8(frameHeader & 0b1)
 
 	if frameBlockingStrategy != *f.blockingStrategy {
-		return errors.New("blocking strategy changed mid-stream")
+		return errorBlockingStrategyChanged
 	}
 
-	meta, err := f.ReadBuf(2)
+	meta, err := f.readBuf(2)
 
 	if err != nil {
-		return fmt.Errorf("error on line 391: %w", err)
+		return err
 	}
 
 	blockSizeBits := meta[0] >> 4
@@ -340,7 +313,7 @@ func (f *Scanner) ReadFrameHeader() error {
 	} else if *f.blockingStrategy == 0b1 && (f.lastCodedNumber == nil || codedNumber == *f.lastCodedNumber+int(blockSize)) {
 		location = fmt.Sprintf("Sample %d", codedNumber)
 	} else {
-		return errors.New("bad coded number")
+		return errorBadCodedNumber
 	}
 
 	sampleRate, err := f.readSampleRate(sampleRateBits)
@@ -362,14 +335,14 @@ func (f *Scanner) ReadFrameHeader() error {
 	}
 
 	crcChecksum := Checksum(f.buf[:f.readIdx])
-	crcExpected, err := f.ReadBuf(1)
+	crcExpected, err := f.readBuf(1)
 
 	if err != nil {
-		return fmt.Errorf("error on line 434: %w", err)
+		return err
 	}
 
 	if crcChecksum != crcExpected[0] {
-		return fmt.Errorf("invalid crc")
+		return errorInvalidCrc
 	}
 
 	// if *verbose {
@@ -384,12 +357,36 @@ func (f *Scanner) ReadFrameHeader() error {
 	return nil
 }
 
+func (f *Scanner) Init() error {
+	frameHeaderBytes, err := f.readBuf(2)
+
+	if err != nil {
+		return err
+	}
+
+	frameHeader := binary.BigEndian.Uint16(frameHeaderBytes)
+
+	if (frameHeader & 0xfffe) != 0xfff8 {
+		return errorInvalidFrameHeader
+	}
+
+	frameBlockingStrategy := uint8(frameHeader & 0b1)
+
+	if _, err := f.src.Seek(-2, io.SeekCurrent); err != nil {
+		return err
+	}
+
+	f.blockingStrategy = new(frameBlockingStrategy)
+
+	return nil
+}
+
 func (f *Scanner) Scan() error {
 	for {
 		f.readIdx = 0
 
-		if err := f.ReadFrameHeader(); err != nil {
-			if errors.Is(err, io.EOF) {
+		if err := f.readFrameHeader(); err != nil {
+			if err == io.EOF {
 				return err
 			}
 
