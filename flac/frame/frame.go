@@ -7,14 +7,7 @@ import (
 	"io"
 
 	"github.com/l-donovan/flacdoc/flac/metadata"
-	"github.com/sigurn/crc8"
 )
-
-var table *crc8.Table
-
-func init() {
-	table = crc8.MakeTable(crc8.CRC8)
-}
 
 type Scanner struct {
 	buf              []byte
@@ -368,7 +361,7 @@ func (f *Scanner) ReadFrameHeader() error {
 		return err
 	}
 
-	crcChecksum := crc8.Checksum(f.buf[:f.readIdx], table)
+	crcChecksum := Checksum(f.buf[:f.readIdx])
 	crcExpected, err := f.ReadBuf(1)
 
 	if err != nil {
@@ -380,9 +373,10 @@ func (f *Scanner) ReadFrameHeader() error {
 	}
 
 	// if *verbose {
-	here, _ := f.src.Seek(0, io.SeekCurrent)
-	fmt.Printf("(%d-%d) [%d] %s, %d block size, %dHz/%db, %s\n", int(here)-f.readIdx, here, f.SampleCount, location, blockSize, sampleRate, bitDepth, channels)
-	// }
+	if false {
+		here, _ := f.src.Seek(0, io.SeekCurrent)
+		fmt.Printf("(%d-%d) [%d] %s, %d block size, %dHz/%db, %s\n", int(here)-f.readIdx, here, f.SampleCount, location, blockSize, sampleRate, bitDepth, channels)
+	}
 
 	f.lastCodedNumber = &codedNumber
 	f.SampleCount += uint64(blockSize)

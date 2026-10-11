@@ -56,6 +56,8 @@ func main() {
 			return err
 		}
 
+		defer func() { _ = fp.Close() }()
+
 		fileMetadata, err := metadata.Parse(fp)
 
 		if err != nil {
